@@ -1,0 +1,5 @@
+node_modules/
+.env
+logs/
+*.log
+immunowarriors-84410-firebase-adminsdk-fbsvc-711a4d0876.json
