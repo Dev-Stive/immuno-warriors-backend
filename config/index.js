@@ -1,10 +1,8 @@
 require('dotenv').config();
 
 module.exports = {
-  firebaseServiceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
-
   // Server Configuration
-  port: process.env.PORT || 3000,
+  port: process.env.PORT || 4000, // Changé à 4000 pour correspondre à ton .env
   nodeEnv: process.env.NODE_ENV || 'development',
 
   // JWT Configuration
@@ -25,14 +23,14 @@ module.exports = {
   // Rate Limiting Configuration
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-    max: parseInt(process.env.RATE_LIMIT_MAX) || 100, // 100 requests per window
+    max: parseInt(process.env.RATE_LIMIT_MAX) || 10000, // Aligné avec ton .env
   },
 
   // CORS Configuration
   cors: {
     allowedOrigins: process.env.CORS_ALLOWED_ORIGINS
       ? process.env.CORS_ALLOWED_ORIGINS.split(',')
-      : ['http://localhost:3000'],
+      : ['http://localhost:3000', 'https://immuno-warriors.com'],
   },
 
   // Logging Configuration
