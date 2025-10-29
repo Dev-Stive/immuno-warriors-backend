@@ -28,7 +28,7 @@ class FirebaseService {
       const serviceAccount = {
         project_id: config.firebase.projectId,
         client_email: config.firebase.clientEmail,
-        private_key: config.firebase.privateKey,
+        private_key: config.firebase.privateKey.replace(/\\n/g, '\n').replace(/^"|"$/g, ''),
       };
 
       logger.info('Firebase: Credentials directes validées', { projectId: serviceAccount.project_id });

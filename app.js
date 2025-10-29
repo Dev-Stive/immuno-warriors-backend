@@ -1,13 +1,14 @@
 const express = require('express');
 const cors = require('cors');
 const os = require('os');
+const config = require('./config');
 const { db, admin } = require('./services/firebaseService');
 const { logger, info, error, warn } = require('./utils/logger');
 const loggingMiddleware = require('./middleware/loggingMiddleware');
 const rateLimitMiddleware = require('./middleware/rateLimitMiddleware');
 const errorMiddleware = require('./middleware/errorMiddleware');
 
-// Import routes
+// Importation des routes
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const combatRoutes = require('./routes/combatRoutes');
@@ -28,38 +29,36 @@ const syncRoutes = require('./routes/syncRoutes');
 
 const app = express();
 
-// --- Health Check with Retry ---
+// Port dynamique pour Render
+const PORT = process.env.PORT || config.port;
+
+// --- Vérifications de santé ---
 async function healthCheck(maxRetries = 3, delayMs = 5000) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      info('Starting health check', { attempt });
+      info('Début de la vérification de santé', { attempt });
 
-      // Check environment variables
-      const requiredEnvVars = ['PORT', 'JWT_SECRET', 'GEMINI_API_KEY', 'FIREBASE_PROJECT_ID'];
+      const requiredEnvVars = ['JWT_SECRET', 'GEMINI_API_KEY', 'FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY', 'FIREBASE_DATABASE_URL'];
       const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
       if (missingVars.length > 0) {
-        throw new Error(`Missing environment variables: ${missingVars.join(', ')}`);
+        throw new Error(`Variables d'environnement manquantes : ${missingVars.join(', ')}`);
       }
-      info('Environment variables check: OK');
+      info('Vérification des variables d\'environnement : OK');
 
-      // Test Firestore write
       await db.collection('status').doc('health_check').set({
         lastChecked: admin.firestore.FieldValue.serverTimestamp(),
         status: 'healthy',
       });
-      info('Firestore write test: OK');
+      info('Écriture de test Firestore réussie');
 
-      // List Firestore collections
       const collections = await db.listCollections();
-      info('Firestore connection: OK', {
-        collections: collections.map(col => col.id),
-      });
+      info('Connexion Firestore : OK', { collections: collections.map(col => col.id) });
 
       return true;
     } catch (err) {
       lastError = err;
-      warn(`Health check failed (attempt ${attempt}/${maxRetries})`, {
+      warn(`Échec de la vérification de santé (tentative ${attempt}/${maxRetries})`, {
         error: err.message,
         stack: err.stack,
       });
@@ -68,34 +67,35 @@ async function healthCheck(maxRetries = 3, delayMs = 5000) {
       }
     }
   }
-  error('Health check failed definitively', {
+  error('Échec définitif de la vérification de santé', {
     error: lastError.message,
     stack: lastError.stack,
   });
   throw lastError;
 }
 
-// --- Update API URL in Firestore ---
+// --- Mettre à jour l'URL dans Firestore ---
 async function updateApiUrlInFirestore(url, status) {
   try {
     await db.collection('config').doc('api').set({
-      baseUrl: url,
+      localUrl: url, // Stocke l'URL publique pour l'app mobile
+      baseUrl: url,  // Gardé pour compatibilité, mais peut être identique à localUrl
       status: status,
-      environment: process.env.NODE_ENV || 'production',
+      environment: process.env.NODE_ENV || 'development',
       lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
-    info(`API URL updated in Firestore: ${url}`, { status });
+    info(`URL API mise à jour dans Firestore : ${url}`, { status });
   } catch (err) {
-    error('Failed to update API URL in Firestore', {
+    error('Échec de la mise à jour de l\'URL dans Firestore', {
       error: err.message,
       stack: err.stack,
     });
   }
 }
 
-// --- Global Middlewares ---
+// --- Middlewares globaux ---
 app.use(cors({
-  origin: process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(',') : '*',
+  origin: process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(',') : (process.env.NODE_ENV === 'production' ? 'https://immuno-warriors.com' : '*'),
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
@@ -103,17 +103,50 @@ app.use(express.json());
 app.use(loggingMiddleware);
 app.use(rateLimitMiddleware);
 
-// --- Welcome Route ---
+// --- Route d'accueil ---
 app.get('/', (req, res) => {
   res.status(200).json({
-    message: 'Welcome to the Immuno-Warriors API!',
+    message: 'Bienvenue sur l\'API Immuno-Warriors !',
     version: '1.0.0',
-    environment: process.env.NODE_ENV || 'production',
+    environment: process.env.NODE_ENV || 'development',
     endpoints: routes.map(({ path }) => path),
   });
 });
 
-// --- Health Check Route ---
+// --- Montage des routes ---
+const routes = [
+  { path: '/api/auth', router: authRoutes, baseMessage: 'API Authentification' },
+  { path: '/api/user', router: userRoutes, baseMessage: 'API Utilisateurs' },
+  { path: '/api/combat', router: combatRoutes, baseMessage: 'API Combats' },
+  { path: '/api/research', router: researchRoutes, baseMessage: 'API Recherche' },
+  { path: '/api/gemini', router: geminiRoutes, baseMessage: 'API Gemini AI' },
+  { path: '/api/base-virale', router: baseViraleRoutes, baseMessage: 'API Base Virale' },
+  { path: '/api/pathogen', router: pathogenRoutes, baseMessage: 'API Pathogènes' },
+  { path: '/api/antibody', router: antibodyRoutes, baseMessage: 'API Anticorps' },
+  { path: '/api/notification', router: notificationRoutes, baseMessage: 'API Notifications' },
+  { path: '/api/memory', router: memoryRoutes, baseMessage: 'API Mémoire Immunitaire' },
+  { path: '/api/inventory', router: inventoryRoutes, baseMessage: 'API Inventaire' },
+  { path: '/api/progression', router: progressionRoutes, baseMessage: 'API Progression' },
+  { path: '/api/achievement', router: achievementRoutes, baseMessage: 'API Réalisations' },
+  { path: '/api/threat-test', router: threatScannerRoutes, baseMessage: 'API Test de Menaces Scanner' },
+  { path: '/api/leaderboard', router: leaderboardRoutes, baseMessage: 'API Classement' },
+  { path: '/api/multiplayer', router: multiplayerRoutes, baseMessage: 'API Multijoueur' },
+  { path: '/api/sync', router: syncRoutes, baseMessage: 'API Synchronisation' },
+];
+
+routes.forEach(({ path, router, baseMessage }) => {
+  router.get('/', (req, res) => {
+    res.status(200).json({
+      message: baseMessage,
+      version: '1.0.0',
+      environment: process.env.NODE_ENV || 'development',
+    });
+  });
+  app.use(path, router);
+  info(`Route montée : ${path}`);
+});
+
+// --- Route de santé ---
 app.get('/api/health', async (req, res) => {
   try {
     await db.collection('status').doc('health_check').get();
@@ -123,72 +156,39 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    error('Health check failed', { error: err.message });
+    error('Échec de la vérification de santé', { error: err.message });
     res.status(500).json({ status: 'unhealthy', error: err.message });
   }
 });
 
-// --- API Base Route ---
+// --- Route de base API ---
 app.get('/api', (req, res) => {
   res.status(200).json({
-    message: 'Welcome to the Immuno-Warriors API!',
+    message: 'Bienvenue sur l\'API Immuno-Warriors !',
     version: '1.0.0',
-    environment: process.env.NODE_ENV || 'production',
+    environment: process.env.NODE_ENV || 'development',
     endpoints: routes.map(({ path }) => path),
   });
 });
 
-// --- Mount Routes ---
-const routes = [
-  { path: '/api/auth', router: authRoutes, baseMessage: 'Authentication API' },
-  { path: '/api/user', router: userRoutes, baseMessage: 'Users API' },
-  { path: '/api/combat', router: combatRoutes, baseMessage: 'Combat API' },
-  { path: '/api/research', router: researchRoutes, baseMessage: 'Research API' },
-  { path: '/api/gemini', router: geminiRoutes, baseMessage: 'Gemini AI API' },
-  { path: '/api/base-virale', router: baseViraleRoutes, baseMessage: 'Viral Base API' },
-  { path: '/api/pathogen', router: pathogenRoutes, baseMessage: 'Pathogens API' },
-  { path: '/api/antibody', router: antibodyRoutes, baseMessage: 'Antibodies API' },
-  { path: '/api/notification', router: notificationRoutes, baseMessage: 'Notifications API' },
-  { path: '/api/memory', router: memoryRoutes, baseMessage: 'Immune Memory API' },
-  { path: '/api/inventory', router: inventoryRoutes, baseMessage: 'Inventory API' },
-  { path: '/api/progression', router: progressionRoutes, baseMessage: 'Progression API' },
-  { path: '/api/achievement', router: achievementRoutes, baseMessage: 'Achievements API' },
-  { path: '/api/threat-test', router: threatScannerRoutes, baseMessage: 'Threat Scanner API' },
-  { path: '/api/leaderboard', router: leaderboardRoutes, baseMessage: 'Leaderboard API' },
-  { path: '/api/multiplayer', router: multiplayerRoutes, baseMessage: 'Multiplayer API' },
-  { path: '/api/sync', router: syncRoutes, baseMessage: 'Synchronization API' },
-];
-
-routes.forEach(({ path, router, baseMessage }) => {
-  router.get('/', (req, res) => {
-    res.status(200).json({
-      message: baseMessage,
-      version: '1.0.0',
-      environment: process.env.NODE_ENV || 'production',
-    });
-  });
-  app.use(path, router);
-  info(`Route mounted: ${path}`);
-});
-
-// --- Error Handling Middleware ---
+// --- Middleware de gestion des erreurs ---
 app.use(errorMiddleware);
 
-// --- Graceful Shutdown ---
+// --- Gestion des arrêts gracieux ---
 let isShuttingDown = false;
 
 process.on('SIGTERM', async () => {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  info('Received SIGTERM signal. Shutting down server...');
+  info('Signal SIGTERM reçu. Arrêt du serveur...');
   try {
     await db.collection('status').doc('api_status').update({
       last_stopped: admin.firestore.FieldValue.serverTimestamp(),
-      message: 'API stopped',
+      message: 'API arrêtée',
     });
-    await updateApiUrlInFirestore(process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT}`, 'stopped');
+    await updateApiUrlInFirestore(process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : `http://localhost:${PORT}`, 'stopped');
   } catch (err) {
-    error('Error during Firestore shutdown', { error: err.message });
+    error('Erreur lors de l\'arrêt de Firestore', { error: err.message });
   }
   process.exit(0);
 });
@@ -196,22 +196,22 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  info('Received SIGINT signal. Shutting down server...');
+  info('Signal SIGINT reçu. Arrêt du serveur...');
   try {
     await db.collection('status').doc('api_status').update({
       last_stopped: admin.firestore.FieldValue.serverTimestamp(),
-      message: 'API stopped',
+      message: 'API arrêtée',
     });
-    await updateApiUrlInFirestore(process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT}`, 'stopped');
+    await updateApiUrlInFirestore(process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : `http://localhost:${PORT}`, 'stopped');
   } catch (err) {
-    error('Error during Firestore shutdown', { error: err.message });
+    error('Erreur lors de l\'arrêt de Firestore', { error: err.message });
   }
   process.exit(0);
 });
 
-// --- Unhandled Errors ---
+// --- Gestion des erreurs non gérées ---
 process.on('unhandledRejection', (reason, promise) => {
-  error('Unhandled Promise Rejection', {
+  error('Promesse non gérée rejetée', {
     reason: reason.message || reason,
     stack: reason.stack,
     promise,
@@ -219,7 +219,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 process.on('uncaughtException', (err) => {
-  error('Uncaught Exception', {
+  error('Exception non gérée', {
     error: err.message,
     stack: err.stack,
   });
@@ -228,42 +228,40 @@ process.on('uncaughtException', (err) => {
   }
 });
 
-// --- Start Server ---
+// --- Démarrage du serveur ---
 async function startServer() {
   try {
-    info('Starting server...');
+    info('Démarrage du serveur...');
     await healthCheck();
-
-    const port = process.env.PORT || 4000;
-    const ip = Object.values(os.networkInterfaces())
+    const interfaces = os.networkInterfaces();
+    const ip = Object.values(interfaces)
       .flat()
       .find(i => i.family === 'IPv4' && !i.internal)?.address || '0.0.0.0';
-    const localUrl = `http://${ip}:${port}`;
+    const localUrl = process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : `http://${ip}:${PORT}`;
 
-    const server = app.listen(port, '0.0.0.0', async () => {
-      info(`Server started on port ${port}`, {
+    const server = app.listen(PORT, '0.0.0.0', async () => {
+      info(`Serveur démarré sur le port ${PORT}`, {
         localUrl: `${localUrl}/api`,
-        environment: process.env.NODE_ENV || 'production',
+        environment: process.env.NODE_ENV || 'development',
       });
 
-      // Update Firestore with Render URL or local URL
-      const apiUrl = process.env.RENDER_EXTERNAL_URL || localUrl;
-      await updateApiUrlInFirestore(apiUrl, 'active');
+      await updateApiUrlInFirestore(localUrl, 'active');
 
+      // Mise à jour du statut Firestore
       await db.collection('status').doc('api_status').set({
         last_started: admin.firestore.FieldValue.serverTimestamp(),
-        message: 'API started',
-        port,
-        environment: process.env.NODE_ENV || 'production',
+        message: 'API démarrée',
+        port: PORT,
+        environment: process.env.NODE_ENV || 'development',
         ip,
-        apiUrl,
-      });
+        localUrl,
+      }, { merge: true });
     });
 
     process.on('SIGTERM', () => server.close());
     process.on('SIGINT', () => server.close());
   } catch (err) {
-    error('Failed to start server', {
+    error('Échec du démarrage du serveur', {
       error: err.message,
       stack: err.stack,
     });
